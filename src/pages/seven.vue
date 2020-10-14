@@ -11,8 +11,14 @@
       <el-container>
         <el-aside width="200px">
           <div class="fileUpload">
+            <label for="audio" class="fileBtn">
+              上传音频
+            </label>
+            <input id="audio" type="file" @change="onAudioChange" multiple  style="display: none;">
+          </div>
+          <div class="fileUpload">
             <label for="file" class="fileBtn">
-              上传文件
+              上传标注
             </label>
             <input id="file" type="file" @change="onFileChange" multiple  style="display: none;">
           </div>
@@ -81,7 +87,7 @@ import 'echarts/lib/component/tooltip'
 // import 'echarts/lib/component/title'
 import FileSaver from 'file-saver'
 
-import { Container, Footer, Main, Tag,Header, Aside, Button, Dialog, Form, FormItem, Input } from 'element-ui'
+import { Container, Footer, Main, Tag,Header, Aside, Button, Dialog, Form, FormItem, Input, Message, Loading } from 'element-ui'
 
 export default {
   name: "three",
@@ -113,13 +119,16 @@ export default {
       regionArray: [], //
       currentRegion: 20,
       audioIdx: 0,
-      audioCurrent: 0,
+      audioCurrent: -1,
 
       dialogVisible: false, // 对话框
       form: {
         vibratorTiming: 1000,
         version: '0.0.1'
       },
+
+      waveformData: null
+
     }
   },
   computed:  {
@@ -153,16 +162,52 @@ export default {
         return result = h + ":" + m;
       }
     },
-    // 上传文件
-    onFileChange (event) {
+    // 上传音频文件
+    onAudioChange (event) {
       let files = event.target.files || event.dataTransfer.files;
-
-      let audio, text
+      if (this.wavesurfer) {
+        this.wavesurfer.destroy()
+      }
+      // Loading
+      this.loadingInstance = Loading.service({ fullscreen: true })
+      let audio
       files.forEach(item => {
         if (/audio\//.test(item.type)) {
           audio = item
-        } else if (/application\/json/.test(item.type)) {
+        } else {
+          Message.error('请上传正确的音频文件');
+        }
+      })
+      // 音频文件上传
+      if (audio) {
+        this.wavesurfer = WaveSurfer.create({
+          container: '#waveform',
+          waveColor: "#f00",
+          progressColor: "rgba(254, 255, 255, 0.4)",
+          cursorColor: "#f00",
+          height: 200,
+          plugins: [RegionsPlugin.create()]
+        });
+        this.wavesurfer.load(URL.createObjectURL(audio))
+        this.wavesurfer.on('ready', () => {
+          this.onDrawRegion() // region 绘制
+          // 初始化音频
+          this.onInitAudio(audio)
+        })
+      }
+    },
+    // 上传标注文件
+    onFileChange (event) {
+      let files = event.target.files || event.dataTransfer.files;
+
+      // Loading
+      this.loadingInstance = Loading.service({ fullscreen: true })
+      let text
+      files.forEach(item => {
+        if (/application\/json/.test(item.type)) {
           text = item
+        } else {
+          Message.error('请上传正确的标注文件');
         }
       })
       // 标注文件上传
@@ -181,22 +226,10 @@ export default {
                 xAxis: item.time
               }
           })
+          _this.wavesurfer.unAll()
+          _this.onInit(_this.waveformData, 2000)
         };
         reader.readAsText(text);
-      }
-      // 音频文件上传
-      if (audio) {
-        this.wavesurfer = WaveSurfer.create({
-          container: '#waveform',
-          waveColor: "#f00",
-          progressColor: "rgba(254, 255, 255, 0.4)",
-          cursorColor: "#f00",
-          height: 200,
-          plugins: [RegionsPlugin.create()]
-        });
-        this.wavesurfer.load(URL.createObjectURL(audio))
-        // 初始化音频
-        this.onInitAudio(audio)
       }
     },
     // 初始化音频
@@ -233,8 +266,10 @@ export default {
           }
         }
         console.log(data)
-
-        _this.onInit(data, 2000)
+        _this.waveformData = data
+        window.removeEventListener('keydown', this.onKeydown)
+        window.addEventListener('keydown', _this.onKeydown) // 空格监听
+        _this.onInit(data, 2000) // 初始化
       }
       fileReader.readAsArrayBuffer(audio);
 
@@ -289,8 +324,6 @@ export default {
           type: 'inside',
           filterMode: 'none',
           xAxisIndex: [0],
-          // startValue: 0,
-          // endValue: max,
           minValueSpan: 500
         }],
         series: {
@@ -299,7 +332,6 @@ export default {
             return item.value;
           }),
           showSymbol: false,
-          // sampling: 'average',
           showAllSymbol: false,
           markLine: {
             symbol: ['none', 'none'],
@@ -324,34 +356,6 @@ export default {
         myChart.setOption(option)
       }
 
-      /*
-      * 监听键盘空格
-      * 音频播放、暂停
-      * */
-      window.addEventListener('keydown', (e) => {
-        e.stopPropagation()
-        const event = e || window.event;  // 标准化事件对象
-        if (event.keyCode === 32) {
-          event.preventDefault()
-          if (this.wavesurfer.isPlaying()) {
-            this.active = false
-            this.wavesurfer.pause()
-          } else {
-            this.active = true
-            // 重置当前播放标注index
-            this.tags.some((item, index) => {
-              if (item > this.current * 20) {
-                this.audioIdx = index
-                this.audioCurrent = item.slice(0,-1)
-
-                return  true
-              }
-            })
-            this.wavesurfer.regions.list[this.current].play() // 当前region重新播放
-            // this.wavesurfer.play() // 音频继续播放 脱离region
-          }
-        }
-      })
       /*
       * 点击 chart 空白处事件
       * */
@@ -386,27 +390,15 @@ export default {
       })
 
       /*
-      * region 绘制
+      * region 添加点击事件
       * */
       let regionNum = Math.ceil(this.wavesurfer.getDuration() / 20)
       for (let i = 0; i < regionNum; i++) {
-        this.regionArray.push(20 * (i + 1))
-        // 标注区域
-        let obj = this.wavesurfer.addRegion({
-          id: i,
-          start: 20 * i,
-          end: 20 * (i + 1),
-          loop: false,
-          drag: false,
-          resize: false,
-          // color: "rgba(254, 255, 255, 0.4)"
-          color: this.Color()
-        });
-
         // 标注区域点击事件
-        obj.on('click', () => {
+        this.wavesurfer.regions.list[i].on('click', () => {
           this.active = true
           this.current = i
+          this.currentRegion = (i + 1) * 20
           let array = data.slice(i * 2000, (i + 1) * 2000)
 
           option.series.data = array.map(function (item) {
@@ -454,9 +446,8 @@ export default {
       * */
       this.wavesurfer.on('audioprocess', (params) => {
         let current = parseFloat(params).toFixed(2)
-        // console.log(current)
 
-        //
+        // 图表播放进度条
         this.changeArea = [current, current]
         myChart.dispatchAction({
           type: 'brush',
@@ -469,6 +460,7 @@ export default {
           ]
         });
 
+        // 长播放刷新图表region
         if (!this.active && current > this.currentRegion) {
           this.current++
           this.currentRegion = (this.current + 1) * 20
@@ -484,6 +476,7 @@ export default {
           myChart.setOption(option)
         }
 
+        // ding
         if (current.slice(0,-1) == this.audioCurrent) {
           this.audioIdx++
           this.audioCurrent = this.tags[this.audioIdx].slice(0,-1)
@@ -491,12 +484,18 @@ export default {
         }
 
       })
+
+      this.$nextTick(() => { // 以服务的方式调用的 Loading 需要异步关闭
+        this.loadingInstance.close();
+      });
     },
+    // 标签删除
     onRemoveTag (tag) {
       let index = this.tags.indexOf(tag)
       this.tags.splice(index, 1);
       this.onRemove(index)
     },
+    // 标注文件下载
     onDownloadFile () {
       let obj = {
         vibratorTiming: this.form.vibratorTiming,
@@ -512,17 +511,65 @@ export default {
       obj.sequence = arr
       let content = JSON.stringify(obj)
       var blob = new Blob([content ], {type: "text/plain;charset=utf-8"});
-      FileSaver.saveAs(blob, "audioFile.json.json");
+      FileSaver.saveAs(blob, "audioFile.json");
     },
-    //
+    // 长播放与暂停，区别region播放
     onPlayVideo () {
       this.active = false
       this.wavesurfer.playPause()
+    },
+    /*
+    * 监听键盘空格
+    * 音频播放、暂停
+    * */
+    onKeydown (e) {
+      e.stopPropagation()
+      const event = e || window.event;  // 标准化事件对象
+      if (event.keyCode === 32) {
+        event.preventDefault()
+        if (this.wavesurfer.isPlaying()) {
+          this.active = false
+          this.wavesurfer.pause()
+        } else {
+          this.active = true
+          // 重置当前播放标注index
+          this.tags.some((item, index) => {
+            if (item > this.current * 20) {
+              this.audioIdx = index
+              this.audioCurrent = item.slice(0,-1)
+
+              return  true
+            }
+          })
+          this.wavesurfer.regions.list[this.current].play() // 当前region重新播放
+          // this.wavesurfer.play() // 音频继续播放 脱离region
+        }
+      }
+    },
+    // region绘制
+    onDrawRegion () {
+      let regionNum = Math.ceil(this.wavesurfer.getDuration() / 20)
+      for (let i = 0; i < regionNum; i++) {
+        this.regionArray.push(20 * (i + 1))
+        // 标注区域
+        this.wavesurfer.addRegion({
+          id: i,
+          start: 20 * i,
+          end: 20 * (i + 1),
+          loop: false,
+          drag: false,
+          resize: false,
+          // color: "rgba(254, 255, 255, 0.4)"
+          color: this.Color()
+        });
+      }
     }
   },
   beforeDestroy() {
     if (this.wavesurfer) {
       console.log('销毁了')
+      window.removeEventListener('keydown', this.onKeydown)
+      this.wavesurfer.clearRegions()
       this.wavesurfer.destroy()
     }
   }

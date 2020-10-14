@@ -1,4 +1,16 @@
 # vue-video-system
+## 引子
+> 为音频标注而开发的小工具, 持续开发更新ing   
+> Github地址：[vue-video-system](https://github.com/suiyang1714/audio-marking-tool)
+
+![工具截图](https://blogqiniu.adityasui.com/audiotool.png)
+
+1. wavesurfer视图为 audio.duration / 20 个region,点击每个region会刷新echart；
+2. echarts 视图为20s长度的region，可点击视图进行标注；
+3. 上传文件按钮可上传音频，wavesurfer或者下载标注json和音频一起上传，绘制视图；
+4. 播放/暂停按钮为整段播放；
+5. 空格键支持region的播放暂停，播放结束后自动循环该region；
+6. 下载标注是下载此次标注的数据，可二次标注...
 
 ## #6 seven.vue
 这一版主要修改标注线不精确问题、加入标注校对（ding.mp3）、标注文件新增震动时长与版本号
@@ -73,6 +85,28 @@ showAllSymbol: false,
 
 ### #6.2 校对标注
 监听音频播放，当播放到标注时，播放 ding.mp3
+
+```
+      /*
+      * 音频播放进度监测
+      * */
+      this.wavesurfer.on('audioprocess', (params) => {
+        let current = parseFloat(params).toFixed(2)
+
+        ...
+
+        // ding
+        if (current.slice(0,-1) == this.audioCurrent) {
+          this.audioIdx++
+          this.audioCurrent = this.tags[this.audioIdx].slice(0,-1)
+          this.audio.play()
+        }
+
+      })
+```
+> 使用 **toFixed(2)** 来保留两位小数会因为四舍五入，使得 current 并不能准确对比标注点，所以再对比标注点的时候通过slice舍弃最后一位
+
+播放过去 audioIdx 与 audioCurrent 会自动更新，所以当点击 wavesurfer视图的region 重新播放或者跳到后面时，相应的 audioIdx 与 audioCurrent 也应该要重置或者更新
 
 ## #5 five、six.vue
 第五版与第六版优化了各类方法，支持下载的标注文件再次上传修改，element-ui与echart 优化为按需引用
