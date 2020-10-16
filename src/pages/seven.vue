@@ -58,10 +58,25 @@
     <el-dialog
         title="下载标注"
         :visible.sync="dialogVisible"
-        width="30%">
-      <el-form ref="form" :model="form" label-width="80px">
-        <el-form-item label="震动时长">
-          <el-input type="number" v-model="form.vibratorTiming"></el-input>
+        width="50%">
+      <el-form ref="form" :model="form" label-width="100px">
+        <el-form-item label="震动效果">
+          <el-select v-model="form.vibrationEffect">
+            <el-option label="单次时长" value="simple"></el-option>
+            <el-option label="震动模式" value="pattern"></el-option>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="震动时长" v-if="form.vibrationEffect === 'simple'">
+          <el-input v-model="form.vibratorTiming" placeholder="例如：1000，单位毫秒"></el-input>
+        </el-form-item>
+        <el-form-item label="震动模式" v-if="form.vibrationEffect === 'pattern'">
+          <el-input v-model="form.vibratorPattern" placeholder="例如：200, 400, 200, 400"></el-input>
+        </el-form-item>
+        <el-form-item label="单次吸气时长">
+          <el-input type="number" v-model="form.inspirationLen" placeholder="单位秒"></el-input>
+        </el-form-item>
+        <el-form-item label="单次呼气时长">
+          <el-input type="number" v-model="form.expirationLen" placeholder="单位秒"></el-input>
         </el-form-item>
         <el-form-item label="版本号">
           <el-input v-model="form.version"></el-input>
@@ -87,7 +102,7 @@ import 'echarts/lib/component/tooltip'
 // import 'echarts/lib/component/title'
 import FileSaver from 'file-saver'
 
-import { Container, Footer, Main, Tag,Header, Aside, Button, Dialog, Form, FormItem, Input, Message, Loading } from 'element-ui'
+import { Container, Footer, Main, Tag,Header, Aside, Button, Dialog, Form, FormItem, Input, Message, Loading, Select, Option } from 'element-ui'
 
 export default {
   name: "three",
@@ -102,7 +117,9 @@ export default {
     'el-dialog': Dialog,
     'el-form': Form,
     'el-form-item': FormItem,
-    'el-input': Input
+    'el-input': Input,
+    'el-select': Select,
+    'el-option': Option
   },
   data () {
     return {
@@ -118,16 +135,23 @@ export default {
 
       regionArray: [], //
       currentRegion: 20,
-      audioIdx: 0,
+
+      audioIdx: 0, //
       audioCurrent: -1,
 
       dialogVisible: false, // 对话框
       form: {
-        vibratorTiming: 1000,
+        vibrationEffect: '', // 震动效果
+        vibratorTiming: '', //
+        vibratorPattern: '', //
+        expirationLen: '',
+        inspirationLen: '',
         version: '0.0.1'
       },
 
-      waveformData: null
+      waveformData: null, // 波形数据
+
+      vibratorMarkline: [], // 呼气、吸气标记
 
     }
   },
@@ -216,16 +240,74 @@ export default {
         let _this = this
         reader.onload = function(){
           let obj = JSON.parse(this.result)
-          let array = obj.sequence
-          _this.audioCurrent = array[0].time.slice(0,-1)
-          _this.tags = array.map(item => {
-            return item.time
-          })
-          _this.area = array.map(item => {
-            return {
-                xAxis: item.time
+          let array = []
+          obj.vibrateRange.forEach(item => {
+            array.push(item.startTime, item.endTime)
+            let len = Math.ceil((item.endTime - item.startTime) / (obj.expirationLen + obj.inspirationLen))
+            let time = item.startTime * 1
+            for(let i = 1; i <= len; i++) {
+              let inspiration = obj.inspirationLen + time + ''
+              let expiration = obj.inspirationLen + obj.expirationLen + time + ''
+              let arr = [
+                {
+                  name: '呼气',
+                  xAxis: inspiration,
+                  lineStyle: {
+                    type: 'dashed',
+                    color: '#000'
+                  },
+                  label: {
+                    show: true
+                  }
+                },
+                {
+                  name: '吸气',
+                  xAxis: expiration,
+                  lineStyle: {
+                    type: 'dashed',
+                    color: '#C3945B'
+                  },
+                  label: {
+                    show: true
+                  }
+                }
+              ]
+              _this.vibratorMarkline.push(inspiration, expiration) //
+              _this.area.push(...arr)
+              time += obj.inspirationLen + obj.expirationLen
+            }
+
+            _this.area.unshift({
+              name: '吸气',
+              xAxis: item.startTime,
+              lineStyle: {
+                type: 'dashed',
+                color: '#C3945B'
+              },
+              label: {
+                show: true
               }
+            })
+            // _this.area.pop()
+            _this.vibratorMarkline.unshift(item.startTime)
+            _this.vibratorMarkline.pop()
           })
+          _this.audioCurrent = _this.vibratorMarkline[0].slice(0,-1)
+          console.log(_this.audioCurrent)
+          _this.tags = array
+           array.forEach(item => {
+             _this.area.push({
+               xAxis: item,
+               lineStyle: {
+                 type: 'solid',
+                 color: '#3167E3'
+               }
+             })
+          })
+
+          console.log(_this.area)
+
+
           _this.wavesurfer.unAll()
           _this.onInit(_this.waveformData, 2000)
         };
@@ -335,7 +417,7 @@ export default {
           showAllSymbol: false,
           markLine: {
             symbol: ['none', 'none'],
-            label: {show: false},
+            label: {show: true},
             data: this.area,
             animation: false
           },
@@ -367,7 +449,11 @@ export default {
           let index = this.tags.indexOf(num)
           if (index === -1) {
             this.area.push({
-              xAxis: num
+              xAxis: num,
+              lineStyle: {
+                type: 'solid',
+                color: '#3167E3'
+              }
             })
 
             option.series.markLine.data = this.area
@@ -412,7 +498,7 @@ export default {
           // obj.play()
 
           // 重置当前播放标注index
-          this.tags.some((item, index) => {
+          this.vibratorMarkline.some((item, index) => {
             if (item > i * 20) {
               this.audioIdx = index
               this.audioCurrent = item.slice(0,-1)
@@ -430,7 +516,7 @@ export default {
       this.wavesurfer.on('pause', () => {
         if (this.current < regionNum && this.active) {
           // 重置当前播放标注index
-          this.tags.some((item, index) => {
+          this.vibratorMarkline.some((item, index) => {
             if (item > this.current * 20) {
               this.audioIdx = index
               this.audioCurrent = item.slice(0,-1)
@@ -477,10 +563,13 @@ export default {
         }
 
         // ding
+        console.log(current.slice(0,-1), this.audioCurrent)
         if (current.slice(0,-1) == this.audioCurrent) {
           this.audioIdx++
-          this.audioCurrent = this.tags[this.audioIdx].slice(0,-1)
           this.audio.play()
+          if (this.audioIdx < this.vibratorMarkline.length) {
+            this.audioCurrent = this.vibratorMarkline[this.audioIdx].slice(0,-1)
+          }
         }
 
       })
@@ -493,25 +582,33 @@ export default {
     onRemoveTag (tag) {
       let index = this.tags.indexOf(tag)
       this.tags.splice(index, 1);
-      this.onRemove(index)
+      this.onRemove(index + this.vibratorMarkline.length)
     },
     // 标注文件下载
     onDownloadFile () {
       let obj = {
-        vibratorTiming: this.form.vibratorTiming,
+        vibrationEffect: this.form.vibrationEffect,
+        vibratorTiming: Number(this.form.vibratorTiming),
+        vibratorPattern: this.form.vibratorPattern ? this.form.vibratorPattern.split(',') : '',
+        expirationLen: Number(this.form.expirationLen),
+        inspirationLen: Number(this.form.inspirationLen),
         version: this.form.version
       }
       let arr = []
       let sort = this.tags.sort((a, b) => a - b)
-      sort.forEach(item => {
+
+      for (let i = 0; i < this.tags.length / 2; i++) {
         arr.push({
-          time: item
+          startTime: sort[i * 2],
+          endTime: sort[(i * 2) + 1]
         })
-      })
-      obj.sequence = arr
+      }
+      obj.vibrateRange = arr
       let content = JSON.stringify(obj)
       var blob = new Blob([content ], {type: "text/plain;charset=utf-8"});
       FileSaver.saveAs(blob, "audioFile.json");
+
+      this.dialogVisible = false
     },
     // 长播放与暂停，区别region播放
     onPlayVideo () {
@@ -533,7 +630,7 @@ export default {
         } else {
           this.active = true
           // 重置当前播放标注index
-          this.tags.some((item, index) => {
+          this.vibratorMarkline.some((item, index) => {
             if (item > this.current * 20) {
               this.audioIdx = index
               this.audioCurrent = item.slice(0,-1)
@@ -563,7 +660,12 @@ export default {
           color: this.Color()
         });
       }
-    }
+    },
+    /*
+    * 标注点 ding 更新
+    * 分段标注加入吸气、呼气间隔 ding
+    * 10.15
+    * */
   },
   beforeDestroy() {
     if (this.wavesurfer) {
@@ -642,5 +744,8 @@ export default {
     height: 10px;
     background-color: #000;
   }
+}
+.el-input {
+  width: 220px;
 }
 </style>
